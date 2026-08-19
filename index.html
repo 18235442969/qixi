@@ -369,9 +369,11 @@
   #gameB .btnRow{display:flex;gap:10px;margin-top:18px;justify-content:center}
   #gameB .btnRow .btn{padding:12px 22px;font-size:14px}
   #gameB #hud{position:fixed;top:0;left:0;right:0;z-index:10;
-    padding:calc(env(safe-area-inset-top, 0px) + 10px) 14px 0;display:flex;gap:10px;align-items:center;
+    padding:calc(env(safe-area-inset-top, 0px) + 10px) 56px 0 14px;display:flex;gap:10px;align-items:center;
     transition:opacity .4s}
   #gameB #hud.hidden{opacity:0;pointer-events:none}
+  /* v7 修正：☰ 独立固定右上角并高于弹层（.screen z-20），弹层打开时也可返回菜单 */
+  #gameB #menuBtn{position:fixed;top:calc(env(safe-area-inset-top, 0px) + 10px);right:14px;z-index:30}
   #gameB #progressWrap{flex:1;max-width:300px;height:20px;border-radius:999px;background:rgba(255,255,255,.10);
     border:1px solid rgba(255,255,255,.16);position:relative;overflow:hidden}
   #gameB #progressBar{height:100%;width:0%;border-radius:999px;background:linear-gradient(90deg,#7ee8fa,#b388ff,#ff8fc0);
@@ -470,8 +472,9 @@
   <div id="heartChip">❤ <b id="heartNum">0</b></div>
   <button id="hintBtn" title="显示参考轨迹">💡</button>
   <button id="muteBtn">🔊</button>
-  <button id="menuBtn" title="返回菜单">☰</button>
 </div>
+<!-- v7 修正：☰ 移出 HUD 独立固定右上角，开始/故事/结算弹层打开时也能返回菜单 -->
+<button id="menuBtn" title="返回菜单">☰</button>
 
 <!-- 开始页 -->
 <div id="startScreen" class="screen">
@@ -2987,6 +2990,10 @@ window.__gameB={
   let W = 0, H = 0, DPR = 1, tNow = 0, lastT = 0, rafId = 0, running = false, tick = 0;
   let stars = [], flow = [], shoots = [], hearts = [];
   let shootNext = 3, heartNext = 2.5;
+  /* v7 修正：银河带"隐约可见"参数（原 0.07 峰值/0.26 带宽/80 流动点在文字后过亮过密）
+   * peak ≤0.035 / dots ≤50 / maxDotAlpha ≤0.16 / bandRatio ≤0.18 为 harness 回归阈值
+   * v7 二次修正（执行器限额熔断，主 Agent 应急微调）：再调暗、带上移避开标题/副标题区 */
+  const MILKY = { peak: 0.032, dots: 42, dotA: 0.04, dotAVar: 0.08, bandRatio: 0.12, yRatio: 0.11, cyRatio: 0.26 };
 
   function build() {
     stars = [];
@@ -2999,13 +3006,13 @@ window.__gameB={
         hue: pick2(hues), base: 0.3 + Math.random() * 0.55,
       });
     }
-    flow = [];   // 银河微光：沿斜带的缓慢流动亮点
+    flow = [];   // 银河微光：沿斜带的缓慢流动薄雾（v7 修正：更少更暗更柔）
     const len = Math.hypot(W, H);
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < MILKY.dots; i++) {
       flow.push({
-        off: Math.random() * len, spd: rand2(8, 26),
-        y0: (Math.random() + Math.random() - 1) * H * 0.16,   // 带内近似高斯
-        r: 0.5 + Math.random() * 1.2, a: 0.12 + Math.random() * 0.3, ph: Math.random() * TAU2,
+        off: Math.random() * len, spd: rand2(6, 18),
+        y0: (Math.random() + Math.random() - 1) * Math.min(W, H) * MILKY.yRatio,
+        r: 0.9 + Math.random() * 1.5, a: MILKY.dotA + Math.random() * MILKY.dotAVar, ph: Math.random() * TAU2,
       });
     }
   }
@@ -3074,6 +3081,7 @@ window.__gameB={
   }
 
   function render() {
+    g.clearRect(0, 0, W, H);   // v7 三次修正：每帧清屏，否则星星/银河/飘心逐帧叠加（亮度累积、飘心拖出长轨迹）
     // 星星（呼吸闪烁）
     for (const s of stars) {
       const a = s.base * (0.45 + 0.55 * Math.sin(tNow * s.sp + s.ph));
@@ -3082,23 +3090,28 @@ window.__gameB={
       g.arc(s.x, s.y, s.r, 0, TAU2);
       g.fill();
     }
-    // 银河微光带（缓慢流动）
-    const angle = -0.30, cx = W * 0.5, cy = H * 0.55;
-    const len = Math.hypot(W, H) * 0.75, bandHalf = Math.min(W, H) * 0.26;
+    // 银河微光带（v7 修正：收窄调暗；二次修正：中心上移至头像区后方，标题/副标题/卡片落在干净夜空上）
+    const angle = -0.30, cx = W * 0.5, cy = H * MILKY.cyRatio;
+    const len = Math.hypot(W, H) * 0.75, bandHalf = Math.min(W, H) * MILKY.bandRatio;
     g.save();
     g.translate(cx, cy); g.rotate(angle);
     const grad = g.createLinearGradient(0, -bandHalf, 0, bandHalf);
     grad.addColorStop(0, 'rgba(170,185,255,0)');
-    grad.addColorStop(0.5, 'rgba(200,212,255,0.07)');
+    grad.addColorStop(0.5, 'rgba(200,212,255,' + MILKY.peak + ')');
     grad.addColorStop(1, 'rgba(170,185,255,0)');
     g.fillStyle = grad;
     g.fillRect(-len, -bandHalf, len * 2, bandHalf * 2);
     for (const f of flow) {
       const x = ((f.off + tNow * f.spd) % (len * 2)) - len;   // 循环流动
       const a = f.a * (0.5 + 0.5 * Math.sin(tNow * 1.2 + f.ph));
-      g.fillStyle = 'rgba(225,232,255,' + a.toFixed(3) + ')';
+      if (a <= 0.004) continue;
+      const rr = f.r * 2.6;   // 径向渐变柔化：薄雾感而非硬点/刮痕
+      const fg = g.createRadialGradient(x, f.y0, 0, x, f.y0, rr);
+      fg.addColorStop(0, 'rgba(222,230,255,' + a.toFixed(3) + ')');
+      fg.addColorStop(1, 'rgba(222,230,255,0)');
+      g.fillStyle = fg;
       g.beginPath();
-      g.arc(x, f.y0, f.r, 0, TAU2);
+      g.arc(x, f.y0, rr, 0, TAU2);
       g.fill();
     }
     g.restore();
@@ -3150,11 +3163,20 @@ window.__gameB={
   }
   window.addEventListener('resize', function () { if (running) resize(); });
 
-  /* QA 钩子：运行状态与帧计数（供 harness 验证动效启停与随时间变化） */
+  /* QA 钩子：运行状态与帧计数（供 harness 验证动效启停与随时间变化）
+   * milky：银河带亮度/密度参数（v7 修正后的回归阈值载体） */
   window.__menuFx = {
     start: start,
     stop: stop,
-    info: function () { return { running: running, tick: tick, entities: stars.length + flow.length + shoots.length + hearts.length }; },
+    info: function () {
+      return {
+        running: running, tick: tick, entities: stars.length + flow.length + shoots.length + hearts.length,
+        milky: {
+          peak: MILKY.peak, dots: MILKY.dots,
+          maxDotAlpha: MILKY.dotA + MILKY.dotAVar, bandRatio: MILKY.bandRatio,
+        },
+      };
+    },
   };
 
   start();   // 初始菜单可见，自动开跑
